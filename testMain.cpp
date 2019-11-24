@@ -11,6 +11,8 @@ struct CustomType {
     std::string str = "";
 };
 
+using namespace EzArgs;
+
 int main(int argc, char** argv)
 {
     for (int i = 0; i < argc; i++) {
@@ -19,29 +21,31 @@ int main(int argc, char** argv)
     std::cout << std::endl;
 
     double x;
+    double q;
     std::string str;
     bool bx;
     bool detected;
     std::optional<int> optInt;
     CustomType custom;
 
-    std::cout << "x " << x << ", str " << str << ", bx " << (bx ? "true" : "false") << ", optInt " << (optInt ? std::to_string(optInt.value()) : "{}") << ", Custom{ " << custom.n << ", " << custom.str << " }" << std::endl;
+    std::cout << "x " << x << ", q " << q << ", str " << str << ", bx " << (bx ? "true" : "false") << ", optInt " << (optInt ? std::to_string(optInt.value()) : "{}") << ", Custom{ " << custom.n << ", " << custom.str << " }" << std::endl;
 
-    EzArgs::ArgParser argParser;
+    ArgParser argParser;
     argParser.SetOptions({
-        { "help,h",   EzArgs::PrintHelp(argParser, false, std::cerr, "Hello!"),  "prints help" },
-        { "number,d", EzArgs::ParseRequiredValue(x),                             "double" },
-        { "b,bosch",  EzArgs::ParseRequiredValue(str),                           "bosch" },
-        { "nope,n",   EzArgs::ParseRequiredValue(bx),                            "nope nope" },
-        { "custom,c", EzArgs::ParseRequiredValue(custom),                        "custom type parsing" },
-        { "optint,o", EzArgs::ParseOptionalValue(optInt),                        "huh? {}S" },
-        { "v,V",      EzArgs::DetectPresence(detected),                          "vvvvvv" },
-        { "e",        [](auto) -> EzArgs::Error { return EzArgs::Error::None; }, "empty" },
+        { "help,h",     PrintHelp(argParser, false, std::cerr, "Hello!"),                    "prints help" },
+        { "number,d",   SetValue(x),                                                         "double" },
+        { "nonumber,q", SetValue(q, -0.1010),                                                "qouble, defaults to -0.1010" },
+        { "b,bosch",    SetValue(str),                                                       "bosch" },
+        { "nope,n",     SetValue(bx),                                                        "nope nope" },
+        { "custom,c",   SetValue(custom),                                                    "custom type parsing" },
+        { "optint,o",   SetOptionalValue(optInt),                                            "huh? {}S" },
+        { "v,V",        DetectPresence(detected),                                            "vvvvvv" },
+        { "e",          { Parameter::None, [](auto) -> Error { return Error::None; } }, "empty" },
     });
     // TODO argParser.SetRules({}); // e.g. aliases are mutually exclusive, require one of, all or none... e.t.c.
     auto positionalArgs = argParser.ParseArgs(argc, argv);
 
-    std::cout << "x " << x << ", str " << str << ", bx " << (bx ? "true" : "false") << ", optInt " << (optInt ? std::to_string(optInt.value()) : "{}") << ", Custom{ " << custom.n << ", " << custom.str << " }" << std::endl;
+    std::cout << "x " << x << ", q " << q << ", str " << str << ", bx " << (bx ? "true" : "false") << ", optInt " << (optInt ? std::to_string(optInt.value()) : "{}") << ", Custom{ " << custom.n << ", " << custom.str << " }" << std::endl;
 
     // std::tuple<int> pArgs = argParser.GetPositionalArguments(); // see if we can do some template wizardry to use our parse functions to turn a vector of expected size into a tuple
 

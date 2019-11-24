@@ -12,16 +12,24 @@ namespace EzArgs {
 enum class Error {
     None,
     ExpectedShortAlias,
+    ExpectedLongAlias,
     ExpectedAliasIndicator,
     OptionHasNoAliases,
     AliasClash,
     EmptyAlias,
     UnrecognisedAlias,
-    ExpectedArgumentValue,
-    UnExpectedArgumentValue,
-    UnrecognisedArgumentValue,
+    ExpectedParameter,
+    UnexpectedParameter,
     NullOptionAction,
+    ParameterParseError,
+    InvalidParameterEnumValue,
     CustomError_1 = 100,
+};
+
+enum class Parameter {
+    None,
+    Optional,
+    Required,
 };
 
 /**
@@ -37,15 +45,15 @@ using ErrorHandler = std::function<void(Error, const std::string& where)>;
  * if true is returned.
  */
 template <typename T>
-using ArgValueParser = const std::function<Error(const std::string& argString, T& valueOut)>;
+using ParameterParser = const std::function<Error(const std::string& parameter, T& valueOut)>;
 
 /**
- * Should return a vector of {index, aliases, value} objects, and a vector of
+ * Should return a vector of {index, aliases, param} objects, and a vector of
  * positional args. Just make sure the format is correct, don't check for
- * duplicates or unrecognised arguments or values here.
+ * duplicates, unrecognised args, or invalid parameter values here.
  */
 using ParsedArg = std::tuple<int, std::string, std::string>;
-using CmdLineParser = std::function<std::tuple<std::vector<ParsedArg>, std::vector<std::string>>(int argc, char** argv, const ErrorHandler& errorFunc_)>;
+using ArgsParser = std::function<std::tuple<std::vector<ParsedArg>, std::vector<std::string>>(int argc, char** argv, const ErrorHandler& errorFunc_)>;
 
 /**
  * When an option is tri
@@ -57,20 +65,20 @@ using OptionAction = std::function<Error(std::string toParse)>;
  *        argument specified when your program is run
  *
  * @param aliases_ A string representing the option's name(s), for example using
- *              Posix style arg parsing "h,H,help" would result in this options
- *              action being triggered by the presence of "-h", "-H" or
- *              "--help". The names are comma seperated and any number of names
- *              can be specified.
+ *                 Posix style arg parsing "h,H,help" would result in this
+ *                 options action being triggered by the presence of "-h", "-H"
+ *                 or "--help". The names are comma seperated and any number of
+ *                 names can be specified.
  *
  * @param onParse_ Use this to do something when this option is specified. A
- *                number of helper functions have been provided for common use
- *                cases such as setting values, e.g DetectPresence(bEnableThing)
+ *                 number of helper functions have been provided for common use
+ *                 cases, e.g SetValue(dMyNum) or DetectPresence(bArgDetected)
  *
  * @param helpText_ Use this text to describe usage of this Option.
  */
 struct Option {
     const std::string aliases_;
-    const OptionAction onParse_;
+    const std::tuple<Parameter, OptionAction> onParse_;
     const std::string helpText_;
 };
 
@@ -78,46 +86,47 @@ struct Option {
 namespace {
 
 template <typename T>
-inline ArgValueParser<T> GetDefaultParser()
+inline ParameterParser<T> GetDefaultParser()
 {
-    return [](const std::string& argString, T& valueOut) -> Error
+    return [](const std::string& param, T& valueOut) -> Error
     {
-        auto stream = std::stringstream(argString);
+        auto stream = std::stringstream(param);
         T temp;
         stream >> temp;
         if (!stream.fail() && stream.eof()) {
             valueOut = temp;
             return Error::None;
         } else {
-            return Error::UnExpectedArgumentValue;
+            return Error::ParameterParseError;
         }
     };
 }
 
 template <>
-inline ArgValueParser<bool> GetDefaultParser()
+inline ParameterParser<bool> GetDefaultParser()
 {
-    return [](const std::string& argString, bool& valueOut) -> Error
+    return [](const std::string& param, bool& valueOut) -> Error
     {
-        if (argString == "true") {
+        std::string boolString = param;
+        std::transform(boolString.begin(), boolString.end(), boolString.begin(), [](auto c){ return std::tolower(c); });
+
+        if (boolString == "true" || boolString == "y" || boolString == "yes") {
             valueOut = true;
             return Error::None;
-        } else if (argString == "false") {
+        } else if (boolString == "false" || boolString == "n" || boolString == "no") {
             valueOut = false;
             return Error::None;
-        } else if (argString.empty()) {
-            return Error::ExpectedArgumentValue;
         }
-        return Error::UnrecognisedArgumentValue;
+        return Error::ParameterParseError;
     };
 }
 
 template <>
-inline ArgValueParser<std::string> GetDefaultParser()
+inline ParameterParser<std::string> GetDefaultParser()
 {
-    return [](const std::string& argString, std::string& valueOut) -> Error
+    return [](const std::string& param, std::string& valueOut) -> Error
     {
-        valueOut = argString;
+        valueOut = param;
         return Error::None;
     };
 }
@@ -138,13 +147,13 @@ static std::vector<std::string> ParseAliases(const std::string& aliases)
 
 } // end private namespace
 
-std::string PointToArg(int argc, char** argv, int argcToPointTo)
+std::string PointToArg(int argc, char** argv, int argToPointTo)
 {
     std::stringstream stream;
     unsigned pointerIndex = 0;
     for (int i = 0; i < argc; i++) {
         std::string arg(argv[i]);
-        if (i < argcToPointTo) {
+        if (i < argToPointTo) {
             pointerIndex += arg.size() + 1;
         }
         stream << arg << " ";
@@ -153,13 +162,13 @@ std::string PointToArg(int argc, char** argv, int argcToPointTo)
     return stream.str();
 }
 
-std::string PointToOptions(const std::vector<Option>& options, std::vector<unsigned> indexesToPointTo)
+std::string PointToOptions(const std::vector<Option>& options, std::vector<unsigned> pointTo)
 {
     std::stringstream stream;
     for (unsigned currentIndex = 0; currentIndex < options.size(); currentIndex++) {
         const auto& option = options[currentIndex];
         bool indicate = false;
-        if (std::find(indexesToPointTo.cbegin(), indexesToPointTo.cend(), currentIndex) != indexesToPointTo.cend()) {
+        if (std::find(pointTo.cbegin(), pointTo.cend(), currentIndex) != pointTo.cend()) {
             indicate = true;
         }
         stream << (indicate ? "--> " : "") << "{ " << option.aliases_ << ", " << option.helpText_ << " }" << std::endl;
@@ -180,11 +189,14 @@ public:
             case Error::ExpectedShortAlias :
                 std::cout << "Expected at least one character following the short alias token." << std::endl;
                 break;
+            case Error::ExpectedLongAlias :
+                std::cout << "Expected at least one character following the long alias token." << std::endl;
+                break;
             case Error::ExpectedAliasIndicator :
                 std::cout << "Expected the arg to begin with a short or long alias token." << std::endl;
                 break;
             case Error::OptionHasNoAliases :
-                std::cout << "Please specify at least one short or long alias for this option, e.g. \"h,H,help\" specifies three aliases for the help option." << std::endl;
+                std::cout << "Please specify at least one short or long alias for this option, e.g. \"h,H,help\" specifies three aliases for a help option." << std::endl;
                 break;
             case Error::AliasClash :
                 std::cout << "Each Option must have unique aliases, they cannot share long or short aliases." << std::endl;
@@ -195,17 +207,20 @@ public:
             case Error::UnrecognisedAlias :
                 std::cout << "This alias was not recognised, please check help to see available options." << std::endl;
                 break;
-            case Error::ExpectedArgumentValue :
-                std::cout << "Option requires an argument value, e.g. \"alias=value\" or \"alias value\"." << std::endl;
+            case Error::ExpectedParameter :
+                std::cout << "Option requires a parameter, e.g. \"alias=value\" or \"alias value\"." << std::endl;
                 break;
-            case Error::UnExpectedArgumentValue :
-                std::cout << "Option does not accept an argument value." << std::endl;
-                break;
-            case Error::UnrecognisedArgumentValue :
-                std::cout << "Option couldn't parse the specified argument value." << std::endl;
+            case Error::UnexpectedParameter :
+                std::cout << "Option does not accept a parameter." << std::endl;
                 break;
             case Error::NullOptionAction :
                 std::cout << "Option's action is null, please specify a valid action for the Option." << std::endl;
+                break;
+            case Error::ParameterParseError :
+                std::cout << "Failed to parse parameter." << std::endl;
+                break;
+            case Error::InvalidParameterEnumValue :
+                std::cout << "Parameter enum value must be None, Optional, or Required." << std::endl;
                 break;
             default :
                 std::cout << "Custom Error code detected, consider specifying a custom ErrorHandler function." << std::endl;
@@ -218,7 +233,7 @@ public:
         {
             int index = 1;
 
-            std::vector<std::tuple<int, std::string, std::string>> argsAndValues;
+            std::vector<std::tuple<int, std::string, std::string>> argsAndParams;
             for (; index < argc; index++) {
                 const std::string arg = argv[index];
 
@@ -230,13 +245,13 @@ public:
                         auto aliasFirst = 2u;
                         auto aliasLast = arg.find_first_of('=');
                         std::string alias = arg.substr(aliasFirst, aliasLast - aliasFirst);
-                        std::string value;
+                        std::string param;
                         if (aliasLast != arg.npos) {
-                            auto valueFirst = aliasLast + 1;
-                            auto valueLast = arg.npos;
-                            value = arg.substr(valueFirst, valueLast - valueFirst);
+                            auto paramFirst = aliasLast + 1;
+                            auto paramLast = arg.npos;
+                            param = arg.substr(paramFirst, paramLast - paramFirst);
                         }
-                        argsAndValues.push_back({ index, alias, value });
+                        argsAndParams.push_back({ index, alias, param });
                     }
                 } else if (arg.substr(0, 1) == "-") {
                     if (arg.size() == 1 || arg.at(1) == '=') {
@@ -244,26 +259,20 @@ public:
                     } else {
                         for (const char& shortAlias : arg.substr(1, arg.npos)) {
                             if (shortAlias == '=') {
-                                auto& [index, alias, value] = argsAndValues.back();
-                                (void)index;
-                                (void)alias;
                                 auto first = arg.find_first_of('=') + 1;
                                 auto last = arg.npos;
-                                value = arg.substr(first, last - first);
+                                std::get<2>(argsAndParams.back()) = arg.substr(first, last - first);
                                 break;
                             } else if(std::isalpha(shortAlias)) {
-                                argsAndValues.push_back({ index, {shortAlias}, "" });
+                                argsAndParams.push_back({ index, {shortAlias}, "" });
                             } else {
                                 errorFunc_(Error::ExpectedShortAlias, PointToArg(argc, argv, index));
                             }
                         }
                     }
-                } else if (!argsAndValues.empty()) {
-                    auto& [index, alias, value] = argsAndValues.back();
-                    (void) index;
-                    (void) alias;
-                    if (value.empty()) {
-                        value = arg;
+                } else if (!argsAndParams.empty()) {
+                    if (std::get<2>(argsAndParams.back()).empty()) {
+                        std::get<2>(argsAndParams.back()) = arg;
                     } else {
                         errorFunc_(Error::ExpectedAliasIndicator, PointToArg(argc, argv, index));
                     }
@@ -280,7 +289,7 @@ public:
                 positionalArgs.push_back(std::string(argv[index]));
             }
 
-            return { argsAndValues, positionalArgs };
+            return { argsAndParams, positionalArgs };
         };
     }
 
@@ -288,9 +297,9 @@ public:
     {
         errorFunc_ = std::move(errorHandler);
     }
-    void SetCommandLineParser(CmdLineParser&& commandLineParser)
+    void SetArgsParser(ArgsParser&& argsParser)
     {
-        argsParser_ = std::move(commandLineParser);
+        argsParser_ = std::move(argsParser);
     }
 
     bool SetOptions(std::vector<Option>&& options)
@@ -308,12 +317,17 @@ public:
                 break;
             }
 
-            if (option.onParse_ == nullptr) {
+            if (std::get<OptionAction>(option.onParse_) == nullptr) {
                 errorFunc_(Error::NullOptionAction, PointToOptions(options_, { currentIndex }));
                 success = false;
                 break;
             }
 
+            if (auto parameterPresence = std::get<Parameter>(option.onParse_); parameterPresence != Parameter::None && parameterPresence != Parameter::Optional && parameterPresence != Parameter::Required) {
+                errorFunc_(Error::InvalidParameterEnumValue, PointToOptions(options_, { currentIndex }));
+                success = false;
+                break;
+            }
 
             for (const auto& alias : ParseAliases(option.aliases_)) {
                 if (aliasMap_.count(alias) > 0) {
@@ -342,6 +356,12 @@ public:
 
     void PrintHelpTable(std::ostream& out = std::cout, std::string additionalHelpText = "") const
     {
+        std::map<Parameter, std::string> parameterStrings {
+            {Parameter::None,     "None     "},
+            {Parameter::Optional, "Optional "},
+            {Parameter::Required, "Required "},
+        };
+        const unsigned paramColWidth = 9;
         unsigned aliasColWidth = 0;
         unsigned helpColWidth = 0;
         for (const auto& [aliases, action, helpText] : options_) {
@@ -351,16 +371,16 @@ public:
         }
 
         std::string aliasTitle = "Aliases";
+        std::string paramTitle = "Parameter";
         std::string helpTitle = "Usage";
-        out << " _" << std::string(aliasColWidth, '_') << "___"  << std::string(helpColWidth, '_') << "_ " << std::endl;
-        out << "| " << aliasTitle << std::string(aliasColWidth - aliasTitle.size(), ' ') << " | " << helpTitle << std::string(helpColWidth - helpTitle.size(), ' ') << " |" << std::endl;
-        out << "|_" << std::string(aliasColWidth, '_') << "_|_"  << std::string(helpColWidth, '_') << "_|" << std::endl;
-        for (const auto& [aliases, action, helpText] : options_) {
-            (void) action;
-            out << "| " << aliases << std::string(aliasColWidth - aliases.size(), ' ') << " | " << helpText << std::string(helpColWidth - helpText.size(), ' ') << " |"<< std::endl;
+        out << " _" << std::string(aliasColWidth, '_') << "___"  << std::string(paramColWidth, '_') << "___"  << std::string(helpColWidth, '_') << "_ " << std::endl;
+        out << "| " << aliasTitle << std::string(aliasColWidth - aliasTitle.size(), ' ') << " | " << paramTitle << std::string(paramColWidth - paramTitle.size(), ' ') << " | " << helpTitle << std::string(helpColWidth - helpTitle.size(), ' ') << " |" << std::endl;
+        out << "|_" << std::string(aliasColWidth, '_') << "_|_"  << std::string(paramColWidth, '_') << "_|_"  << std::string(helpColWidth, '_') << "_|" << std::endl;
+        for (const auto& [aliases, onParse, helpText] : options_) {
+            out << "| " << aliases << std::string(aliasColWidth - aliases.size(), ' ') << " | " << parameterStrings.at(std::get<Parameter>(onParse)) << " | " << helpText << std::string(helpColWidth - helpText.size(), ' ') << " |"<< std::endl;
         }
 
-        out << "|_" << std::string(aliasColWidth, '_') << "_|_"  << std::string(helpColWidth, '_') << "_|" << std::endl;
+        out << "|_" << std::string(aliasColWidth, '_') << "_|_"  << std::string(paramColWidth, '_') << "_|_"  << std::string(helpColWidth, '_') << "_|" << std::endl;
         out << std::endl << additionalHelpText << std::endl << std::endl;
     }
 
@@ -368,7 +388,7 @@ public:
      * ParseArgs parses the arguments in the order they were specified on the
      * comand line. Once an option has been actioned, it will not be actioned
      * again, even if a different alias for the same option was used or a
-     * different value was provided.
+     * different parameter value was provided.
      *
      * @param argc The number of string arguments, take this unmodified from
      *             main.
@@ -386,14 +406,24 @@ public:
     std::vector<std::string> ParseArgs(int argc, char** argv)
     {
         interrupted_ = false;
-        auto [namedArgsValues, positionalArgs] = argsParser_(argc, argv, errorFunc_);
-        for (const auto& [index, alias, value] : namedArgsValues) {
+        auto [parsedArgs, positionalArgs] = argsParser_(argc, argv, errorFunc_);
+        for (const auto& [index, alias, parameter] : parsedArgs) {
             if (interrupted_) {
                 break;
             }
             if (aliasMap_.count(alias) > 0) {
                 unsigned aliasIndex = aliasMap_.at(alias);
-                Error actionError = options_.at(aliasIndex).onParse_(value);
+                auto& [argPresence, optionAction] = options_.at(aliasIndex).onParse_;
+
+                if (argPresence == Parameter::None && !parameter.empty()) {
+                    errorFunc_(Error::UnexpectedParameter, PointToArg(argc, argv, static_cast<int>(index)));
+                    StopParsing();
+                } else if (argPresence == Parameter::Required && parameter.empty()) {
+                    errorFunc_(Error::ExpectedParameter, PointToArg(argc, argv, static_cast<int>(index)));
+                    StopParsing();
+                }
+
+                Error actionError = optionAction(parameter);
                 if (actionError != Error::None) {
                     errorFunc_(actionError, PointToArg(argc, argv, static_cast<int>(index)));
                     StopParsing();
@@ -413,7 +443,7 @@ public:
 
 private:
     ErrorHandler errorFunc_;
-    CmdLineParser argsParser_;
+    ArgsParser argsParser_;
 
     std::vector<Option> options_;
     //      <   alias   ,  index  >
@@ -422,57 +452,81 @@ private:
 };
 
 template <typename T>
-inline OptionAction ParseRequiredValue(T& valueOut, ArgValueParser<T>& parser = GetDefaultParser<T>())
+inline std::tuple<Parameter, OptionAction> SetValue(T& valueOut, ParameterParser<T>& parser = GetDefaultParser<T>())
 {
-    return [&](std::string argValue) -> Error
-    {
-        if (argValue.empty()) {
-            return Error::ExpectedArgumentValue;
-        } else {
+    return {
+        Parameter::Required,
+        [&](std::string argValue) -> Error
+        {
             return parser(argValue, valueOut);
         }
     };
 }
 
 template <typename T>
-inline OptionAction ParseOptionalValue(std::optional<T>& valueOut, ArgValueParser<T>& parser = GetDefaultParser<T>())
+inline std::tuple<Parameter, OptionAction> SetValue(T& valueOut, const T& defaultValue, ParameterParser<T>& parser = GetDefaultParser<T>())
 {
-    return [&](std::string argValue) -> Error
-    {
-        if (argValue.empty()) {
-            valueOut = {};
-            return Error::None;
-        } else {
-            T temp;
-            Error error = parser(argValue, temp);
-            if (error == Error::None) {
-                valueOut = temp;
+    return {
+        Parameter::Optional,
+        [&](std::string argValue) -> Error
+        {
+            if (argValue.empty()) {
+                valueOut = defaultValue;
+                return Error::None;
+            } else {
+                return parser(argValue, valueOut);
             }
-            return error;
         }
     };
 }
 
-inline OptionAction DetectPresence(bool& valueOut)
+template <typename T>
+inline std::tuple<Parameter, OptionAction> SetOptionalValue(std::optional<T>& valueOut, ParameterParser<T>& parser = GetDefaultParser<T>())
 {
-    valueOut = false;
-    return [&](std::string argValue) -> Error
-    {
-        valueOut = true;
-        return argValue.empty() ? Error::None : Error::UnExpectedArgumentValue;
+    return {
+        Parameter::Optional,
+        [&](std::string argValue) -> Error
+        {
+            if (argValue.empty()) {
+                valueOut = {};
+                return Error::None;
+            } else {
+                T temp;
+                Error error = parser(argValue, temp);
+                if (error == Error::None) {
+                    valueOut = temp;
+                }
+                return error;
+            }
+        }
+    };
+}
+
+inline std::tuple<Parameter, OptionAction> DetectPresence(bool& valueOut)
+{
+    return {
+        Parameter::None,
+        [&](auto) -> Error
+        {
+            valueOut = true;
+            return Error::None;
+        }
     };
 }
 
 class ArgParser;
-inline OptionAction PrintHelp(const ArgParser& parser, bool exitAfter = true, std::ostream& ostr = std::cout, const std::string& additionalHelpText = "")
+inline std::tuple<Parameter, OptionAction> PrintHelp(const ArgParser& parser, bool exitAfter = true, std::ostream& ostr = std::cout, const std::string& additionalHelpText = "")
 {
-    return [&, exitAfter, additionalHelpText](auto) -> Error
-    {
-        parser.PrintHelpTable(ostr, additionalHelpText);
-        if (exitAfter) {
-            exit(0);
+    return {
+        Parameter::None,
+        [&, exitAfter, additionalHelpText](auto) -> Error
+        {
+            parser.PrintHelpTable(ostr, additionalHelpText);
+            if (exitAfter) {
+                exit(0);
+            }
+            return Error::None;
         }
-        return Error::None;
     };
 }
 
