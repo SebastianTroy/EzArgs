@@ -138,48 +138,6 @@ static std::vector<std::string> ParseAliases(const std::string& aliases)
 
 } // end private namespace
 
-template <typename T>
-inline OptionAction ParseRequiredValue(T& valueOut, ArgValueParser<T>& parser = GetDefaultParser<T>())
-{
-    return [&](std::string argValue) -> Error
-    {
-        if (argValue.empty()) {
-            return Error::ExpectedArgumentValue;
-        } else {
-            return parser(argValue, valueOut);
-        }
-    };
-}
-
-template <typename T>
-inline OptionAction ParseOptionalValue(std::optional<T>& valueOut, ArgValueParser<T>& parser = GetDefaultParser<T>())
-{
-    return [&](std::string argValue) -> Error
-    {
-        if (argValue.empty()) {
-            valueOut = {};
-            return Error::None;
-        } else {
-            T temp;
-            Error error = parser(argValue, temp);
-            if (error == Error::None) {
-                valueOut = temp;
-            }
-            return error;
-        }
-    };
-}
-
-inline OptionAction DetectPresence(bool& valueOut)
-{
-    valueOut = false;
-    return [&](std::string argValue) -> Error
-    {
-        valueOut = true;
-        return argValue.empty() ? Error::None : Error::UnExpectedArgumentValue;
-    };
-}
-
 std::string PointToArg(int argc, char** argv, int argcToPointTo)
 {
     std::stringstream stream;
@@ -382,22 +340,28 @@ public:
         return success;
     }
 
-    void PrintHelpTable(std::ostream& out = std::cout, std::string additionalHelpText = "")
+    void PrintHelpTable(std::ostream& out = std::cout, std::string additionalHelpText = "") const
     {
-        unsigned longestAlias = 0;
+        unsigned aliasColWidth = 0;
+        unsigned helpColWidth = 0;
         for (const auto& [aliases, action, helpText] : options_) {
             (void) action;
-            (void) helpText;
-            longestAlias = std::max(longestAlias, aliases.size());
+            aliasColWidth = std::max(aliasColWidth, aliases.size());
+            helpColWidth = std::max(helpColWidth, helpText.size());
         }
-        // work out longest alias,
-        // work out if we are line wrapping
-        // print table
 
-        // TODO work out if there is a way to ascertain optional/required... from the function provided (lambda capture means there might be fuckery though so we can't guaruntee the tests aren't messing with users code)
+        std::string aliasTitle = "Aliases";
+        std::string helpTitle = "Usage";
+        out << " _" << std::string(aliasColWidth, '_') << "___"  << std::string(helpColWidth, '_') << "_ " << std::endl;
+        out << "| " << aliasTitle << std::string(aliasColWidth - aliasTitle.size(), ' ') << " | " << helpTitle << std::string(helpColWidth - helpTitle.size(), ' ') << " |" << std::endl;
+        out << "|_" << std::string(aliasColWidth, '_') << "_|_"  << std::string(helpColWidth, '_') << "_|" << std::endl;
+        for (const auto& [aliases, action, helpText] : options_) {
+            (void) action;
+            out << "| " << aliases << std::string(aliasColWidth - aliases.size(), ' ') << " | " << helpText << std::string(helpColWidth - helpText.size(), ' ') << " |"<< std::endl;
+        }
 
-
-        out << additionalHelpText;
+        out << "|_" << std::string(aliasColWidth, '_') << "_|_"  << std::string(helpColWidth, '_') << "_|" << std::endl;
+        out << std::endl << additionalHelpText << std::endl << std::endl;
     }
 
     /**
@@ -456,6 +420,61 @@ private:
     std::map<std::string, unsigned> aliasMap_;
     bool interrupted_;
 };
+
+template <typename T>
+inline OptionAction ParseRequiredValue(T& valueOut, ArgValueParser<T>& parser = GetDefaultParser<T>())
+{
+    return [&](std::string argValue) -> Error
+    {
+        if (argValue.empty()) {
+            return Error::ExpectedArgumentValue;
+        } else {
+            return parser(argValue, valueOut);
+        }
+    };
+}
+
+template <typename T>
+inline OptionAction ParseOptionalValue(std::optional<T>& valueOut, ArgValueParser<T>& parser = GetDefaultParser<T>())
+{
+    return [&](std::string argValue) -> Error
+    {
+        if (argValue.empty()) {
+            valueOut = {};
+            return Error::None;
+        } else {
+            T temp;
+            Error error = parser(argValue, temp);
+            if (error == Error::None) {
+                valueOut = temp;
+            }
+            return error;
+        }
+    };
+}
+
+inline OptionAction DetectPresence(bool& valueOut)
+{
+    valueOut = false;
+    return [&](std::string argValue) -> Error
+    {
+        valueOut = true;
+        return argValue.empty() ? Error::None : Error::UnExpectedArgumentValue;
+    };
+}
+
+class ArgParser;
+inline OptionAction PrintHelp(const ArgParser& parser, bool exitAfter = true, std::ostream& ostr = std::cout, const std::string& additionalHelpText = "")
+{
+    return [&, exitAfter, additionalHelpText](auto) -> Error
+    {
+        parser.PrintHelpTable(ostr, additionalHelpText);
+        if (exitAfter) {
+            exit(0);
+        }
+        return Error::None;
+    };
+}
 
 } // namespace EzArgs
 
