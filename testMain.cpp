@@ -27,20 +27,42 @@ int main(int argc, char** argv)
     bool detected;
     std::optional<int> optInt;
     CustomType custom;
+    std::string party = "We are going to a ";
 
     std::cout << "x " << x << ", q " << q << ", str " << str << ", bx " << (bx ? "true" : "false") << ", optInt " << (optInt ? std::to_string(optInt.value()) : "{}") << ", Custom{ " << custom.n << ", " << custom.str << " }" << std::endl;
 
     ArgParser argParser;
     argParser.SetOptions({
-        { "help,h",     PrintHelp(argParser, false, std::cerr, "Hello!"),                    "prints help" },
-        { "number,d",   SetValue(x),                                                         "double" },
-        { "nonumber,q", SetValue(q, -0.1010),                                                "qouble, defaults to -0.1010" },
-        { "b,bosch",    SetValue(str),                                                       "bosch" },
-        { "nope,n",     SetValue(bx),                                                        "nope nope" },
-        { "custom,c",   SetValue(custom),                                                    "custom type parsing" },
-        { "optint,o",   SetOptionalValue(optInt),                                            "huh? {}S" },
-        { "v,V",        DetectPresence(detected),                                            "vvvvvv" },
-        { "e",          { Parameter::None, [](auto) -> Error { return Error::None; } }, "empty" },
+        { "help,h",      PrintHelp(argParser, false, std::cerr, "Hello!"), "prints help" },
+        { "shorthelp,s", PrintHelp(argParser),                             "prints help to cout and exits" },
+        { "number,d",    SetValue(x),                                      "double" },
+        { "nonumber,q",  SetValue(q, -0.1010),                             "qouble, defaults to -0.1010" },
+        { "b,bosch",     SetValue(str),                                    "bosch" },
+        { "nope,n",      SetValue(bx),                                     "nope nope" },
+        { "custom,c",    SetValue(custom),                                 "custom type parsing" },
+        { "optint,o",    SetOptionalValue(optInt),                         "huh? {}S" },
+        { "v,V",         DetectPresence(detected),                         "vvvvvv" },
+        { "e",
+          OptionActionNoParam{[&]() -> Error
+          {
+              party += "Barmitsva";
+              return Error::None;
+          }
+        },                                                                "NoParam empty" },
+        { "f",
+          OptionActionRequiredParam{[&](const std::string& param) -> Error
+          {
+              party += param;
+              return Error::None;
+          }
+        },                                                                "RequiredParam empty" },
+        { "g",
+          OptionActionOptionalParam{[&](const std::optional<std::string>& param) -> Error
+          {
+              param ? party += param.value() : "Seance!";
+              return Error::None;
+          }
+        },                                                                "OptionalParam empty" },
     });
     // TODO argParser.SetRules({}); // e.g. aliases are mutually exclusive, require one of, all or none... e.t.c.
     auto positionalArgs = argParser.ParseArgs(argc, argv);

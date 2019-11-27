@@ -1,4 +1,4 @@
-#ifndef EZARGS_H
+`#ifndef EZARGS_H
 #define EZARGS_H
 
 #include <string>
@@ -52,13 +52,82 @@ using ParameterParser = const std::function<Error(const std::string& parameter, 
  * positional args. Just make sure the format is correct, don't check for
  * duplicates, unrecognised args, or invalid parameter values here.
  */
-using ParsedArg = std::tuple<int, std::string, std::string>;
+using ParsedArg = std::tuple<int, std::string, std::optional<std::string>>;
 using ArgsParser = std::function<std::tuple<std::vector<ParsedArg>, std::vector<std::string>>(int argc, char** argv, const ErrorHandler& errorFunc_)>;
 
+using OptionActionNoParam = std::function<Error()>;
+using OptionActionOptionalParam = std::function<Error(const std::optional<std::string>&)>;
+using OptionActionRequiredParam = std::function<Error(const std::string&)>;
+
 /**
- * When an option is tri
+ * A constructor per Parameter::None, Parameter::Optional, & Parameter::Required
+ * This helper class exists to allow a cleaner definition between actions which
+ * require parameters or not, and to reduce the ammount of boilerplate required
+ * to construct an Option.
  */
-using OptionAction = std::function<Error(std::string toParse)>;
+class OptionAction {
+public:
+    /**
+     * Converts the action to a OptionActionOptionalParam and specifies
+     * Parameter::None.
+     */
+    OptionAction(OptionActionNoParam&& optionAction)
+        : paramRequirements_(Parameter::None)
+    {
+        if (optionAction != nullptr) {
+            action_ = [action = std::move(optionAction)](auto param) -> Error
+            {
+                if (param) {
+                    return Error::UnexpectedParameter;
+                } else {
+                    return action();
+                }
+            };
+        }
+    }
+
+    /**
+     * Uses the provided OptionActionOptionalParam as it, and specifies
+     * Parameter::Optional.
+     */
+    OptionAction(OptionActionOptionalParam&& optionAction)
+        : paramRequirements_(Parameter::Optional)
+        , action_(std::move(optionAction))
+    {}
+
+    /**
+     * Converts the action to a OptionActionOptionalParam and specifies
+     * Parameter::Required.
+     */
+    OptionAction(OptionActionRequiredParam&& optionAction)
+        : paramRequirements_(Parameter::Required)
+    {
+        if (optionAction != nullptr) {
+            action_ = [action = std::move(optionAction)](auto param) -> Error
+            {
+                if (param) {
+                    return action(param.value());
+                } else {
+                    return Error::ExpectedParameter;
+                }
+            };
+        }
+    }
+
+    Parameter GetParameterRequirements() const
+    {
+        return paramRequirements_;
+    }
+
+    const OptionActionOptionalParam& GetAction() const
+    {
+        return action_;
+    }
+
+private:
+    const Parameter paramRequirements_;
+    OptionActionOptionalParam action_;
+};
 
 /**
  * @brief The Option struct represents a thing you'd like to do in response to a
@@ -78,7 +147,7 @@ using OptionAction = std::function<Error(std::string toParse)>;
  */
 struct Option {
     const std::string aliases_;
-    const std::tuple<Parameter, OptionAction> onParse_;
+    const OptionAction onParse_;
     const std::string helpText_;
 };
 
@@ -229,11 +298,11 @@ public:
             this->StopParsing();
         };
 
-        argsParser_ = [](int argc, char** argv, const ErrorHandler& errorFunc_) -> std::tuple<std::vector<std::tuple<int, std::string, std::string>>, std::vector<std::string>>
+        argsParser_ = [](int argc, char** argv, const ErrorHandler& errorFunc_) -> std::tuple<std::vector<ParsedArg>, std::vector<std::string>>
         {
             int index = 1;
 
-            std::vector<std::tuple<int, std::string, std::string>> argsAndParams;
+            std::vector<ParsedArg> argsAndParams;
             for (; index < argc; index++) {
                 const std::string arg = argv[index];
 
@@ -245,7 +314,7 @@ public:
                         auto aliasFirst = 2u;
                         auto aliasLast = arg.find_first_of('=');
                         std::string alias = arg.substr(aliasFirst, aliasLast - aliasFirst);
-                        std::string param;
+                        std::optional<std::string> param;
                         if (aliasLast != arg.npos) {
                             auto paramFirst = aliasLast + 1;
                             auto paramLast = arg.npos;
@@ -264,14 +333,14 @@ public:
                                 std::get<2>(argsAndParams.back()) = arg.substr(first, last - first);
                                 break;
                             } else if(std::isalpha(shortAlias)) {
-                                argsAndParams.push_back({ index, {shortAlias}, "" });
+                                argsAndParams.push_back({ index, {shortAlias}, {} });
                             } else {
                                 errorFunc_(Error::ExpectedShortAlias, PointToArg(argc, argv, index));
                             }
                         }
                     }
                 } else if (!argsAndParams.empty()) {
-                    if (std::get<2>(argsAndParams.back()).empty()) {
+                    if (!std::get<2>(argsAndParams.back())) {
                         std::get<2>(argsAndParams.back()) = arg;
                     } else {
                         errorFunc_(Error::ExpectedAliasIndicator, PointToArg(argc, argv, index));
@@ -317,13 +386,13 @@ public:
                 break;
             }
 
-            if (std::get<OptionAction>(option.onParse_) == nullptr) {
+            if (option.onParse_.GetAction() == nullptr) {
                 errorFunc_(Error::NullOptionAction, PointToOptions(options_, { currentIndex }));
                 success = false;
                 break;
             }
 
-            if (auto parameterPresence = std::get<Parameter>(option.onParse_); parameterPresence != Parameter::None && parameterPresence != Parameter::Optional && parameterPresence != Parameter::Required) {
+            if (auto parameterPresence = option.onParse_.GetParameterRequirements(); parameterPresence != Parameter::None && parameterPresence != Parameter::Optional && parameterPresence != Parameter::Required) {
                 errorFunc_(Error::InvalidParameterEnumValue, PointToOptions(options_, { currentIndex }));
                 success = false;
                 break;
@@ -377,7 +446,7 @@ public:
         out << "| " << aliasTitle << std::string(aliasColWidth - aliasTitle.size(), ' ') << " | " << paramTitle << std::string(paramColWidth - paramTitle.size(), ' ') << " | " << helpTitle << std::string(helpColWidth - helpTitle.size(), ' ') << " |" << std::endl;
         out << "|_" << std::string(aliasColWidth, '_') << "_|_"  << std::string(paramColWidth, '_') << "_|_"  << std::string(helpColWidth, '_') << "_|" << std::endl;
         for (const auto& [aliases, onParse, helpText] : options_) {
-            out << "| " << aliases << std::string(aliasColWidth - aliases.size(), ' ') << " | " << parameterStrings.at(std::get<Parameter>(onParse)) << " | " << helpText << std::string(helpColWidth - helpText.size(), ' ') << " |"<< std::endl;
+            out << "| " << aliases << std::string(aliasColWidth - aliases.size(), ' ') << " | " << parameterStrings.at(onParse.GetParameterRequirements()) << " | " << helpText << std::string(helpColWidth - helpText.size(), ' ') << " |"<< std::endl;
         }
 
         out << "|_" << std::string(aliasColWidth, '_') << "_|_"  << std::string(paramColWidth, '_') << "_|_"  << std::string(helpColWidth, '_') << "_|" << std::endl;
@@ -413,12 +482,13 @@ public:
             }
             if (aliasMap_.count(alias) > 0) {
                 unsigned aliasIndex = aliasMap_.at(alias);
-                auto& [argPresence, optionAction] = options_.at(aliasIndex).onParse_;
+                Parameter parameterRequirements = options_.at(aliasIndex).onParse_.GetParameterRequirements();
+                auto optionAction = options_.at(aliasIndex).onParse_.GetAction();
 
-                if (argPresence == Parameter::None && !parameter.empty()) {
+                if (parameterRequirements == Parameter::None && parameter) {
                     errorFunc_(Error::UnexpectedParameter, PointToArg(argc, argv, static_cast<int>(index)));
                     StopParsing();
-                } else if (argPresence == Parameter::Required && parameter.empty()) {
+                } else if (parameterRequirements == Parameter::Required && !parameter) {
                     errorFunc_(Error::ExpectedParameter, PointToArg(argc, argv, static_cast<int>(index)));
                     StopParsing();
                 }
@@ -452,81 +522,66 @@ private:
 };
 
 template <typename T>
-inline std::tuple<Parameter, OptionAction> SetValue(T& valueOut, ParameterParser<T>& parser = GetDefaultParser<T>())
+inline OptionActionRequiredParam SetValue(T& valueOut, ParameterParser<T>& parser = GetDefaultParser<T>())
 {
-    return {
-        Parameter::Required,
-        [&](std::string argValue) -> Error
-        {
-            return parser(argValue, valueOut);
-        }
+    return [&](const std::string& argValue) -> Error
+    {
+        return parser(argValue, valueOut);
     };
 }
 
 template <typename T>
-inline std::tuple<Parameter, OptionAction> SetValue(T& valueOut, const T& defaultValue, ParameterParser<T>& parser = GetDefaultParser<T>())
+inline OptionActionOptionalParam SetValue(T& valueOut, const T& defaultValue, ParameterParser<T>& parser = GetDefaultParser<T>())
 {
-    return {
-        Parameter::Optional,
-        [&](std::string argValue) -> Error
-        {
-            if (argValue.empty()) {
-                valueOut = defaultValue;
-                return Error::None;
-            } else {
-                return parser(argValue, valueOut);
-            }
-        }
-    };
-}
-
-template <typename T>
-inline std::tuple<Parameter, OptionAction> SetOptionalValue(std::optional<T>& valueOut, ParameterParser<T>& parser = GetDefaultParser<T>())
-{
-    return {
-        Parameter::Optional,
-        [&](std::string argValue) -> Error
-        {
-            if (argValue.empty()) {
-                valueOut = {};
-                return Error::None;
-            } else {
-                T temp;
-                Error error = parser(argValue, temp);
-                if (error == Error::None) {
-                    valueOut = temp;
-                }
-                return error;
-            }
-        }
-    };
-}
-
-inline std::tuple<Parameter, OptionAction> DetectPresence(bool& valueOut)
-{
-    return {
-        Parameter::None,
-        [&](auto) -> Error
-        {
-            valueOut = true;
+    return [&](const std::optional<std::string>& param) -> Error
+    {
+        if (!param) {
+            valueOut = defaultValue;
             return Error::None;
+        } else {
+            return parser(param.value(), valueOut);
         }
+    };
+}
+
+template <typename T>
+inline OptionActionOptionalParam SetOptionalValue(std::optional<T>& valueOut, ParameterParser<T>& parser = GetDefaultParser<T>())
+{
+    return [&](const std::optional<std::string> param) -> Error
+    {
+        if (!param) {
+            valueOut = {};
+            return Error::None;
+        } else {
+            T temp;
+            Error error = parser(param.value(), temp);
+            if (error == Error::None) {
+                valueOut = temp;
+            }
+            return error;
+        }
+    };
+}
+
+inline OptionActionNoParam DetectPresence(bool& valueOut)
+{
+    return [&]() -> Error
+    {
+        valueOut = true;
+        return Error::None;
     };
 }
 
 class ArgParser;
-inline std::tuple<Parameter, OptionAction> PrintHelp(const ArgParser& parser, bool exitAfter = true, std::ostream& ostr = std::cout, const std::string& additionalHelpText = "")
+inline OptionActionNoParam PrintHelp(const ArgParser& parser, bool exitAfter = true, std::ostream& ostr = std::cout, const std::string& additionalHelpText = "")
 {
-    return {
-        Parameter::None,
-        [&, exitAfter, additionalHelpText](auto) -> Error
-        {
-            parser.PrintHelpTable(ostr, additionalHelpText);
-            if (exitAfter) {
-                exit(0);
-            }
-            return Error::None;
+    return [&, exitAfter, additionalHelpText]() -> Error
+    {
+        parser.PrintHelpTable(ostr, additionalHelpText);
+        if (exitAfter) {
+            exit(0);
         }
+        return Error::None;
     };
 }
 
