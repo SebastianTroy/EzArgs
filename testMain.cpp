@@ -29,7 +29,7 @@ int main(int argc, char** argv)
     CustomType custom;
     std::string party = "We are going to a ";
 
-    std::cout << "x " << x << ", q " << q << ", str " << str << ", bx " << (bx ? "true" : "false") << ", optInt " << (optInt ? std::to_string(optInt.value()) : "{}") << ", Custom{ " << custom.n << ", " << custom.str << " }" << std::endl;
+    std::cout << "x " << x << ", q " << q << ", str " << str << ", bx " << (bx ? "true" : "false") << ", optInt " << (optInt ? std::to_string(optInt.value()) : "{}") << ", Custom{ " << custom.n << ", " << custom.str << " } " << party << std::endl;
 
     ArgParser argParser;
     argParser.SetOptions({
@@ -64,10 +64,12 @@ int main(int argc, char** argv)
           }
         },                                                                "OptionalParam empty" },
     });
-    // TODO argParser.SetRules({}); // e.g. aliases are mutually exclusive, require one of, all or none... e.t.c.
+    argParser.SetRules({
+        RuleMutuallyExclusive({"e", "f", "g"}),
+    });
     auto positionalArgs = argParser.ParseArgs(argc, argv);
 
-    std::cout << "x " << x << ", q " << q << ", str " << str << ", bx " << (bx ? "true" : "false") << ", optInt " << (optInt ? std::to_string(optInt.value()) : "{}") << ", Custom{ " << custom.n << ", " << custom.str << " }" << std::endl;
+    std::cout << "x " << x << ", q " << q << ", str " << str << ", bx " << (bx ? "true" : "false") << ", optInt " << (optInt ? std::to_string(optInt.value()) : "{}") << ", Custom{ " << custom.n << ", " << custom.str << " } " << party << std::endl;
 
     // std::tuple<int> pArgs = argParser.GetPositionalArguments(); // see if we can do some template wizardry to use our parse functions to turn a vector of expected size into a tuple
 

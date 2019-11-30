@@ -1,4 +1,4 @@
-`#ifndef EZARGS_H
+#ifndef EZARGS_H
 #define EZARGS_H
 
 #include <string>
@@ -23,7 +23,9 @@ enum class Error {
     NullOptionAction,
     ParameterParseError,
     InvalidParameterEnumValue,
-    CustomError_1 = 100,
+    RuleExpectedAtLeastOneOf,
+    RuleOptionsMutuallyExclusive,
+    RuleExpectedAllOrNoneOf,
 };
 
 enum class Parameter {
@@ -54,6 +56,12 @@ using ParameterParser = const std::function<Error(const std::string& parameter, 
  */
 using ParsedArg = std::tuple<int, std::string, std::optional<std::string>>;
 using ArgsParser = std::function<std::tuple<std::vector<ParsedArg>, std::vector<std::string>>(int argc, char** argv, const ErrorHandler& errorFunc_)>;
+
+/**
+ * @brief A rule must return true if the parsed args meet its criteria, and
+ *        should call the errorHandler before returning false for any reason.
+ */
+using Rule = std::function<bool(const std::vector<ParsedArg>& parsedArgs, ErrorHandler& errorHandler)>;
 
 using OptionActionNoParam = std::function<Error()>;
 using OptionActionOptionalParam = std::function<Error(const std::optional<std::string>&)>;
@@ -216,6 +224,10 @@ static std::vector<std::string> ParseAliases(const std::string& aliases)
 
 } // end private namespace
 
+///
+/// errorFunc "where" helpers
+///
+
 std::string PointToArg(int argc, char** argv, int argToPointTo)
 {
     std::stringstream stream;
@@ -231,25 +243,71 @@ std::string PointToArg(int argc, char** argv, int argToPointTo)
     return stream.str();
 }
 
+std::string PointToParsedArgs(const std::vector<ParsedArg>& parsedArgs, const std::vector<unsigned>& pointTo)
+{
+    std::stringstream stream;
+    int lastIndex = 0;
+    for (const auto& [index, aliases, param] : parsedArgs) {
+        if (lastIndex != index) {
+            if (lastIndex != 0) {
+                stream << std::endl;
+            }
+            if (std::find(pointTo.cbegin(), pointTo.cend(), index) != pointTo.cend()) {
+                stream << "-->";
+            } else {
+                stream << "   ";
+            }
+            lastIndex = index;
+        }
+        stream << aliases << (param ? " = " + param.value() : "");
+    }
+    return stream.str();
+}
+
 std::string PointToOptions(const std::vector<Option>& options, std::vector<unsigned> pointTo)
 {
     std::stringstream stream;
     for (unsigned currentIndex = 0; currentIndex < options.size(); currentIndex++) {
         const auto& option = options[currentIndex];
-        bool indicate = false;
         if (std::find(pointTo.cbegin(), pointTo.cend(), currentIndex) != pointTo.cend()) {
-            indicate = true;
+            stream << "-->";
+        } else {
+            stream << "   ";
         }
-        stream << (indicate ? "--> " : "") << "{ " << option.aliases_ << ", " << option.helpText_ << " }" << std::endl;
+        stream << "{ " << option.aliases_ << ", " << option.helpText_ << " }" << std::endl;
     }
     return stream.str();
 }
 
+inline std::string PrintVector(const std::vector<std::string>& vec)
+{
+    std::stringstream stream;
+    stream << "{ ";
+    for (unsigned i = 0; i < vec.size(); i++) {
+        stream << (i == 0 ? "" : ", ") << vec[i];
+    }
+    stream << " }";
+    return stream.str();
+}
+
+/**
+ * @brief The ArgParser class is where the meat of this library is. It is
+ *        responsible for parsing the args, with the provided Options and
+ *        checking that the parsed args meet all of the provided Rules. It also
+ *        is responsible for ensuring that the Options provided are valid.
+ */
 class ArgParser {
 public:
+    /**
+     * Defaults errorFunc_ and argsParser_ to simple implementations that should
+     * meet most users requirements.
+     */
     ArgParser()
     {
         errorFunc_ = [&](Error error, const std::string& where) -> void {
+            std::cout << "-----------------" << std::endl;
+            std::cout << "----- ERROR -----" << std::endl;
+            std::cout << "-----------------" << std::endl;
             std::cout << where << std::endl;
             switch (error) {
             case Error::None :
@@ -291,10 +349,17 @@ public:
             case Error::InvalidParameterEnumValue :
                 std::cout << "Parameter enum value must be None, Optional, or Required." << std::endl;
                 break;
-            default :
-                std::cout << "Custom Error code detected, consider specifying a custom ErrorHandler function." << std::endl;
+            case Error::RuleExpectedAtLeastOneOf :
+                std::cout << "Program expects at least one of these Options be specified at runtime." << std::endl;
+                break;
+            case Error::RuleOptionsMutuallyExclusive :
+                std::cout << "Program expects either none, or a single one of these Options be specified at runtime." << std::endl;
+                break;
+            case Error::RuleExpectedAllOrNoneOf :
+                std::cout << "Program expects either none, or all of these Options be specified at runtime." << std::endl;
                 break;
             }
+            std::cout << "-----------------" << std::endl;
             this->StopParsing();
         };
 
@@ -423,6 +488,11 @@ public:
         return success;
     }
 
+    void SetRules(std::vector<Rule>&& rules)
+    {
+        rules_ = std::move(rules);
+    }
+
     void PrintHelpTable(std::ostream& out = std::cout, std::string additionalHelpText = "") const
     {
         std::map<Parameter, std::string> parameterStrings {
@@ -476,23 +546,18 @@ public:
     {
         interrupted_ = false;
         auto [parsedArgs, positionalArgs] = argsParser_(argc, argv, errorFunc_);
+        for (const Rule& rule : rules_) {
+            if (!rule(parsedArgs, errorFunc_)) {
+                StopParsing();
+            }
+        }
         for (const auto& [index, alias, parameter] : parsedArgs) {
             if (interrupted_) {
                 break;
             }
             if (aliasMap_.count(alias) > 0) {
                 unsigned aliasIndex = aliasMap_.at(alias);
-                Parameter parameterRequirements = options_.at(aliasIndex).onParse_.GetParameterRequirements();
                 auto optionAction = options_.at(aliasIndex).onParse_.GetAction();
-
-                if (parameterRequirements == Parameter::None && parameter) {
-                    errorFunc_(Error::UnexpectedParameter, PointToArg(argc, argv, static_cast<int>(index)));
-                    StopParsing();
-                } else if (parameterRequirements == Parameter::Required && !parameter) {
-                    errorFunc_(Error::ExpectedParameter, PointToArg(argc, argv, static_cast<int>(index)));
-                    StopParsing();
-                }
-
                 Error actionError = optionAction(parameter);
                 if (actionError != Error::None) {
                     errorFunc_(actionError, PointToArg(argc, argv, static_cast<int>(index)));
@@ -519,7 +584,12 @@ private:
     //      <   alias   ,  index  >
     std::map<std::string, unsigned> aliasMap_;
     bool interrupted_;
+    std::vector<Rule> rules_;
 };
+
+///
+/// OptionAction Helpers
+///
 
 template <typename T>
 inline OptionActionRequiredParam SetValue(T& valueOut, ParameterParser<T>& parser = GetDefaultParser<T>())
@@ -572,7 +642,6 @@ inline OptionActionNoParam DetectPresence(bool& valueOut)
     };
 }
 
-class ArgParser;
 inline OptionActionNoParam PrintHelp(const ArgParser& parser, bool exitAfter = true, std::ostream& ostr = std::cout, const std::string& additionalHelpText = "")
 {
     return [&, exitAfter, additionalHelpText]() -> Error
@@ -582,6 +651,75 @@ inline OptionActionNoParam PrintHelp(const ArgParser& parser, bool exitAfter = t
             exit(0);
         }
         return Error::None;
+    };
+}
+
+///
+/// ArgsRule Helpers
+///
+
+// private namespace for hidden internal helpers
+namespace {
+
+inline std::vector<unsigned> GetArgIndexesOf(const std::vector<std::string>& ruleAliases, const std::vector<ParsedArg>& parsedArgs)
+{
+        std::vector<unsigned> argIndexes;
+        for (const auto& [index, aliases, param] : parsedArgs) {
+            (void) param; // unused
+            // If the whole comma seperated aliases string has been provided
+            if (std::find(ruleAliases.cbegin(), ruleAliases.cend(), aliases) != ruleAliases.cend()) {
+                argIndexes.push_back(static_cast<unsigned>(index));
+                continue;
+            }
+            // If a single alias for an option has been [rovided
+            for (const std::string& alias : ParseAliases(aliases)) {
+                if (std::find(ruleAliases.cbegin(), ruleAliases.cend(), alias) != ruleAliases.cend()) {
+                    argIndexes.push_back(static_cast<unsigned>(index));
+                    continue;
+                }
+            }
+        }
+        return argIndexes;
+}
+
+} // end private namespace
+
+inline Rule RuleRequireAtLeastOne(const std::vector<std::string>& ruleAliases)
+{
+    return [=](const std::vector<ParsedArg>& parsedArgs, const ErrorHandler& errorHandler) -> bool
+    {
+        auto indexes = GetArgIndexesOf(ruleAliases, parsedArgs);
+        if (indexes.size() == 0) {
+            errorHandler(Error::RuleExpectedAtLeastOneOf, PointToParsedArgs(parsedArgs, indexes) + "\n" + PrintVector(ruleAliases));
+            return false;
+        }
+        return true;
+    };
+}
+
+inline Rule RuleMutuallyExclusive(const std::vector<std::string>& ruleAliases)
+{
+    return [=](const std::vector<ParsedArg>& parsedArgs, const ErrorHandler& errorHandler) -> bool
+    {
+        auto indexes = GetArgIndexesOf(ruleAliases, parsedArgs);
+        if (indexes.size() > 1) {
+            errorHandler(Error::RuleOptionsMutuallyExclusive, PointToParsedArgs(parsedArgs, indexes) + "\n" + PrintVector(ruleAliases));
+            return false;
+        }
+        return true;
+    };
+}
+
+inline Rule RuleRequireAllOrNone(const std::vector<std::string>& ruleAliases)
+{
+    return [=](const std::vector<ParsedArg>& parsedArgs, const ErrorHandler& errorHandler) -> bool
+    {
+        auto indexes = GetArgIndexesOf(ruleAliases, parsedArgs);
+        if (indexes.size() != 0 && indexes.size() != ruleAliases.size()) {
+            errorHandler(Error::RuleExpectedAllOrNoneOf, PointToParsedArgs(parsedArgs, indexes) + "\n" + PrintVector(ruleAliases));
+            return false;
+        }
+        return true;
     };
 }
 
