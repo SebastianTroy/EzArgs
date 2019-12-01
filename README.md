@@ -89,3 +89,4 @@ A custom args parser can be specified to override this behaviour.
  - [ ] Should provide default parsers for both Posix and Windows style args
  - [ ] Tests
  - [ ] Build script for building a static or shared EzArgs library
+ - [ ] Class named ArgsParser too similarly named to function ArgParser
