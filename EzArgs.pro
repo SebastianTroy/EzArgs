@@ -6,6 +6,7 @@ SOURCES += \
     testMain.cpp
 
 HEADERS += \
+    Catch.h \
     EzArgs.h
 
 DISTFILES += \
