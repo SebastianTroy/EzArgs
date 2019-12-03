@@ -17,6 +17,7 @@ enum class Error {
     OptionHasNoAliases,
     AliasClash,
     EmptyAlias,
+    SpaceInAlias,
     UnrecognisedAlias,
     ExpectedParameter,
     UnexpectedParameter,
@@ -218,6 +219,9 @@ static std::vector<std::string> ParseAliases(const std::string& aliases)
         std::string segment = aliases.substr(first, last - first);
         index += segment.size() + 1;
         segments.push_back(segment);
+    }
+    if (!aliases.empty() && aliases.back() == ',') {
+        segments.push_back("");
     }
     return segments;
 }
@@ -453,7 +457,10 @@ inline ErrorHandler GetDefaultErrorHandler(bool exitOnError = true)
             std::cout << "Each Option must have unique aliases, they cannot share long or short aliases." << std::endl;
             break;
         case Error::EmptyAlias :
-            std::cout << "Cannot use ',' as an alias, nor can an alias be an empty string." << std::endl;
+            std::cout << "Cannot use the comma character ',' as an alias, nor can an alias be an empty string." << std::endl;
+            break;
+        case Error::SpaceInAlias :
+            std::cout << "Cannot use the space character ' ' in an alias." << std::endl;
             break;
         case Error::UnrecognisedAlias :
             std::cout << "This alias was not recognised, please check help to see available options." << std::endl;
@@ -532,6 +539,8 @@ public:
                 } else {
                     if (alias.empty()) {
                         errorFunc_(Error::EmptyAlias, PointToOptions(options_, { currentIndex }));
+                    } else if (alias.find(' ') != alias.npos) {
+                        errorFunc_(Error::SpaceInAlias, PointToOptions(options_, { currentIndex }));
                     } else {
                         aliasMap_[alias] = currentIndex;
                     }

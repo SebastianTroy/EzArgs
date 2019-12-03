@@ -85,6 +85,12 @@ By default posix style arguments are expected, with `-a` being a short alias, `-
 
 A custom args parser can be specified to override this behaviour.
 
+## Building Unit Tests
+
+The Catch2 library was used as a single header include, Catch v2.11.0 Generated: 2019-11-15 15:01:56.628356.
+
+It can be found here https://github.com/catchorg/Catch2
+
 ## Future Additions
  - [ ] Should provide default parsers for both Posix and Windows style args
  - [ ] Tests
