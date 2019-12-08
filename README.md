@@ -92,7 +92,8 @@ The Catch2 library was used as a single header include, Catch v2.11.0 Generated:
 It can be found here https://github.com/catchorg/Catch2
 
 ## Future Additions
- - [x] Should provide default parsers for both Posix and Windows style args
- - [ ] Tests
+ - [x] Provide default parser for Posix style args
+ - [ ] Provide default parser for Windows stye args (maybe)
+ - [ ] Tests (in progress)
  - [ ] Build script for building a static or shared EzArgs library
  - [ ] Class named ArgsParser too similarly named to function ArgParser
