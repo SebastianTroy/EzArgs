@@ -228,23 +228,23 @@ static std::vector<std::string> ParseAliases(const std::string& aliases)
 
 inline std::vector<unsigned> GetArgIndexesOf(const std::vector<std::string>& ruleAliases, const std::vector<ParsedArg>& parsedArgs)
 {
-        std::vector<unsigned> argIndexes;
-        for (const auto& [index, aliases, param] : parsedArgs) {
-            (void) param; // unused
-            // If the whole comma seperated aliases string has been provided
-            if (std::find(ruleAliases.cbegin(), ruleAliases.cend(), aliases) != ruleAliases.cend()) {
+    std::vector<unsigned> argIndexes;
+    for (const auto& [index, aliases, param] : parsedArgs) {
+        (void) param; // unused
+        // If the whole comma seperated aliases string has been provided
+        if (std::find(ruleAliases.cbegin(), ruleAliases.cend(), aliases) != ruleAliases.cend()) {
+            argIndexes.push_back(static_cast<unsigned>(index));
+            continue;
+        }
+        // If a single alias for an option has been provided
+        for (const std::string& alias : ParseAliases(aliases)) {
+            if (std::find(ruleAliases.cbegin(), ruleAliases.cend(), alias) != ruleAliases.cend()) {
                 argIndexes.push_back(static_cast<unsigned>(index));
                 continue;
             }
-            // If a single alias for an option has been provided
-            for (const std::string& alias : ParseAliases(aliases)) {
-                if (std::find(ruleAliases.cbegin(), ruleAliases.cend(), alias) != ruleAliases.cend()) {
-                    argIndexes.push_back(static_cast<unsigned>(index));
-                    continue;
-                }
-            }
         }
-        return argIndexes;
+    }
+    return argIndexes;
 }
 
 } // end private namespace
@@ -363,6 +363,7 @@ inline ArgsParser GetDefaultPosixArgsParser(bool allowLongArguments = true, bool
                     if (arg.size() == 2) {
                         if (allowTerminator) {
                             // terminator "--" found, all other args are positional
+                            index++;
                             break;
                         } else {
                             errorFunc_(Error::ExpectedLongAlias, PointToArg(argc, argv, index));

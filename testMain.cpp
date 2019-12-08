@@ -6,6 +6,18 @@
 #include <optional>
 #include <vector>
 
+// Let Catch print our types
+namespace Catch {
+    template<>
+    struct StringMaker<EzArgs::ParsedArg> {
+        static std::string convert(EzArgs::ParsedArg const& value)
+        {
+            auto& [ index, alias, param] = value;
+            return  "{ " + std::to_string(index) + ", " + alias + ", " + (param ? "{" + param.value() + "}" : "{}") + " }";
+        }
+    };
+}
+
 namespace EzArgs {
 
 class TestHelper {
@@ -19,10 +31,7 @@ public:
     TestHelper(std::vector<std::string>&& argVector)
         : argc(static_cast<int>(argVector.size()))
         , argv(new char*[static_cast<unsigned>(argc)])
-        , errorHandler([&](Error err, auto)
-    {
-        errors.push_back(err);
-    })
+        , errorHandler([&](Error err, auto){ errors.push_back(err); })
     {
         for (size_t i = 0; i < argVector.size(); i++) {
             argv[i] = new char[argVector[i].size() + 1];
@@ -77,13 +86,13 @@ TEST_CASE("TestHelpers", "[meta]")
 
         errFunc(Error::None, "");
 
-        REQUIRE(errors.size() == 1);
+        CHECK(errors.size() == 1);
         REQUIRE(errors.front() == Error::None);
 
         auto movedFunc = std::move(errFunc);
         movedFunc(Error::NullOptionAction, "");
 
-        REQUIRE(errors.size() == 2);
+        CHECK(errors.size() == 2);
         REQUIRE(errors.front() == Error::None);
         REQUIRE(errors.back() == Error::NullOptionAction);
     }
@@ -457,8 +466,8 @@ TEST_CASE("Option errors", "[option]")
         defaultParser.SetOptions({
                                      {"h,help", OptionActionNoParam{}, ""},
                                  });
-        REQUIRE(errors.size() == 1);
-        REQUIRE(errors.front() == Error::NullOptionAction);
+        CHECK(errors.size() == 1);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::NullOptionAction) == 1);
     }
 
     SECTION("Null OptionActions")
@@ -469,11 +478,8 @@ TEST_CASE("Option errors", "[option]")
                                      {"d,dope", OptionActionNoParam{}, ""},
                                      {"r,rope", OptionActionNoParam{}, ""},
                                  });
-        REQUIRE(errors.size() == 4);
-        REQUIRE(errors[0] == Error::NullOptionAction);
-        REQUIRE(errors[1] == Error::NullOptionAction);
-        REQUIRE(errors[2] == Error::NullOptionAction);
-        REQUIRE(errors[3] == Error::NullOptionAction);
+        CHECK(errors.size() == 4);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::NullOptionAction) == 4);
     }
 
     SECTION("No Alias")
@@ -481,8 +487,8 @@ TEST_CASE("Option errors", "[option]")
         defaultParser.SetOptions({
                                      {"", PrintHelp(defaultParser), ""},
                                  });
-        REQUIRE(errors.size() == 1);
-        REQUIRE(errors.front() == Error::OptionHasNoAliases);
+        CHECK(errors.size() == 1);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::OptionHasNoAliases) == 1);
     }
 
     SECTION("No Aliases")
@@ -491,9 +497,8 @@ TEST_CASE("Option errors", "[option]")
                                      {"", PrintHelp(defaultParser), ""},
                                      {"", PrintHelp(defaultParser), ""},
                                  });
-        REQUIRE(errors.size() == 2);
-        REQUIRE(errors.front() == Error::OptionHasNoAliases);
-        REQUIRE(errors.back() == Error::OptionHasNoAliases);
+        CHECK(errors.size() == 2);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::OptionHasNoAliases) == 2);
     }
 
     SECTION("Empty Alias")
@@ -501,7 +506,7 @@ TEST_CASE("Option errors", "[option]")
         defaultParser.SetOptions({
                                      {"f,", PrintHelp(defaultParser), ""},
                                  });
-        REQUIRE(errors.size() == 1);
+        CHECK(errors.size() == 1);
         REQUIRE(errors.front() == Error::EmptyAlias);
     }
 
@@ -510,15 +515,260 @@ TEST_CASE("Option errors", "[option]")
         defaultParser.SetOptions({
                                      {",,,", PrintHelp(defaultParser), ""},
                                  });
-        REQUIRE(errors.size() == 4);
-        REQUIRE(errors[0] == Error::EmptyAlias);
-        REQUIRE(errors[1] == Error::EmptyAlias);
-        REQUIRE(errors[2] == Error::EmptyAlias);
-        REQUIRE(errors[3] == Error::EmptyAlias);
+        CHECK(errors.size() == 4);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::EmptyAlias) == 4);
+    }
+
+    SECTION("Spaces in Aliase")
+    {
+        defaultParser.SetOptions({
+                                     {"Hel p", PrintHelp(defaultParser), ""},
+                                 });
+        CHECK(errors.size() == 1);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::SpaceInAlias) == 1);
+    }
+
+    SECTION("Spaces in Aliases")
+    {
+        defaultParser.SetOptions({
+                                     {" , Help,Hel p, Help ", PrintHelp(defaultParser), ""},
+                                 });
+        CHECK(errors.size() == 4);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::SpaceInAlias) == 4);
+    }
+
+    SECTION("Alias clash, single Option")
+    {
+        defaultParser.SetOptions({
+                                     {"h,h,h,Help", PrintHelp(defaultParser), ""},
+                                 });
+        CHECK(errors.size() == 2);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::AliasClash) == 2);
+    }
+
+    SECTION("Alias clash, multiple Options")
+    {
+        defaultParser.SetOptions({
+                                     {"h,h,h,Help", PrintHelp(defaultParser), ""},
+                                     {"Help", PrintHelp(defaultParser), ""},
+                                     {"b,batch", PrintHelp(defaultParser), ""},
+                                 });
+        CHECK(errors.size() == 3);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::AliasClash) == 3);
+    }
+
+    SECTION("Mixed Errors, single Option")
+    {
+        defaultParser.SetOptions({
+                                     {",,Hel p", OptionActionNoParam{}, ""},
+                                 });
+        CHECK(errors.size() == 4);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::SpaceInAlias) == 1);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::EmptyAlias) == 2);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::NullOptionAction) == 1);
+    }
+
+    SECTION("Mixed Errors, multiple Options")
+    {
+        defaultParser.SetOptions({
+                                     {"", OptionActionNoParam{}, ""},
+                                     {"p,Help,", PrintHelp(defaultParser), ""},
+                                     {",,", PrintHelp(defaultParser), ""},
+                                     {" ,h,h", PrintHelp(defaultParser), ""},
+                                     {"Help", PrintHelp(defaultParser), ""},
+                                     {",,Hel p", OptionActionNoParam{}, ""},
+                                 });
+        CHECK(errors.size() == 13);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::NullOptionAction) == 2);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::SpaceInAlias) == 2);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::OptionHasNoAliases) == 1);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::EmptyAlias) == 6);
+        REQUIRE(std::count(errors.cbegin(), errors.cend(), Error::AliasClash) == 2);
+    }
+}
+
+TEST_CASE("Parse Errors","[parse]")
+{
+    SECTION("No args")
+    {
+        auto&& [argc, argv, errFunc, errors] = TestHelper({});
+        auto parser = GetDefaultPosixArgsParser();
+
+        auto&& [ mappedArgs, positionalArgs ] = parser(argc, argv, errFunc);
+        REQUIRE(mappedArgs.empty());
+        REQUIRE(positionalArgs.empty());
+        REQUIRE(errors.empty());
+    }
+
+    SECTION("Long args, no parameters")
+    {
+        auto&& [argc, argv, errFunc, errors] = TestHelper({ "./app/path/test.exe", "--long-arg", "--another-arg" });
+        auto parser = GetDefaultPosixArgsParser();
+
+        auto&& [ mappedArgs, positionalArgs ] = parser(argc, argv, errFunc);
+        CHECK(mappedArgs.size() == 2);
+        REQUIRE(mappedArgs == std::vector<ParsedArg>{ {1, "long-arg", {}}, {2, "another-arg", {}} });
+        REQUIRE(positionalArgs.empty());
+        REQUIRE(errors.empty());
+    }
+
+    SECTION("Long args, spaced parameters")
+    {
+        auto&& [argc, argv, errFunc, errors] = TestHelper({ "./app/path/test.exe", "--long-arg", "value", "--another-arg", "99.999" });
+        auto parser = GetDefaultPosixArgsParser();
+
+        auto&& [ mappedArgs, positionalArgs ] = parser(argc, argv, errFunc);
+        CHECK(mappedArgs.size() == 2);
+        REQUIRE(mappedArgs == std::vector<ParsedArg>{ {1, "long-arg", {"value"}}, {3, "another-arg", {"99.999"}} });
+        REQUIRE(positionalArgs.empty());
+        REQUIRE(errors.empty());
+    }
+
+    SECTION("Long args, equalsed parameters")
+    {
+        auto&& [argc, argv, errFunc, errors] = TestHelper({ "./app/path/test.exe", "--long-arg=value", "--another-arg=99.999" });
+        auto parser = GetDefaultPosixArgsParser();
+
+        auto&& [ mappedArgs, positionalArgs ] = parser(argc, argv, errFunc);
+        CHECK(mappedArgs.size() == 2);
+        REQUIRE(mappedArgs == std::vector<ParsedArg>{ {1, "long-arg", {"value"}}, {2, "another-arg", {"99.999"}} });
+        REQUIRE(positionalArgs.empty());
+        REQUIRE(errors.empty());
+    }
+
+    SECTION("Long args, mixed parameters")
+    {
+        auto&& [argc, argv, errFunc, errors] = TestHelper({ "./app/path/test.exe", "--long-arg", "value", "--another-arg=99.999" });
+        auto parser = GetDefaultPosixArgsParser();
+
+        auto&& [ mappedArgs, positionalArgs ] = parser(argc, argv, errFunc);
+        CHECK(mappedArgs.size() == 2);
+        REQUIRE(mappedArgs == std::vector<ParsedArg>{ {1, "long-arg", {"value"}}, {3, "another-arg", {"99.999"}} });
+        REQUIRE(positionalArgs.empty());
+        REQUIRE(errors.empty());
+    }
+
+    SECTION("Short args, seperate, no parameters")
+    {
+        auto&& [argc, argv, errFunc, errors] = TestHelper({ "./app/path/test.exe", "-p", "-h", "-s" });
+        auto parser = GetDefaultPosixArgsParser();
+
+        auto&& [ mappedArgs, positionalArgs ] = parser(argc, argv, errFunc);
+        CHECK(mappedArgs.size() == 3);
+        REQUIRE(mappedArgs == std::vector<ParsedArg>{ {1, "p", {}}, {2, "h", {}}, {3, "s", {}} });
+        REQUIRE(positionalArgs.empty());
+        REQUIRE(errors.empty());
+    }
+
+    SECTION("Short args, combined, no parameters")
+    {
+        auto&& [argc, argv, errFunc, errors] = TestHelper({ "./app/path/test.exe", "-phs" });
+        auto parser = GetDefaultPosixArgsParser();
+
+        auto&& [ mappedArgs, positionalArgs ] = parser(argc, argv, errFunc);
+        CHECK(mappedArgs.size() == 3);
+        REQUIRE(mappedArgs == std::vector<ParsedArg>{ {1, "p", {}}, {1, "h", {}}, {1, "s", {}} });
+        REQUIRE(positionalArgs.empty());
+        REQUIRE(errors.empty());
+    }
+
+    SECTION("Short args, mixed, no parameters")
+    {
+        auto&& [argc, argv, errFunc, errors] = TestHelper({ "./app/path/test.exe", "-ph", "-s" });
+        auto parser = GetDefaultPosixArgsParser();
+
+        auto&& [ mappedArgs, positionalArgs ] = parser(argc, argv, errFunc);
+        CHECK(mappedArgs.size() == 3);
+        REQUIRE(mappedArgs == std::vector<ParsedArg>{ {1, "p", {}}, {1, "h", {}}, {2, "s", {}} });
+        REQUIRE(positionalArgs.empty());
+        REQUIRE(errors.empty());
+    }
+
+    SECTION("Short args, seperate, spaced parameters")
+    {
+        auto&& [argc, argv, errFunc, errors] = TestHelper({ "./app/path/test.exe", "-p", "pot", "-h", "-s", "sauce" });
+        auto parser = GetDefaultPosixArgsParser();
+
+        auto&& [ mappedArgs, positionalArgs ] = parser(argc, argv, errFunc);
+        CHECK(mappedArgs.size() == 3);
+        REQUIRE(mappedArgs == std::vector<ParsedArg>{ {1, "p", {"pot"}}, {3, "h", {}}, {4, "s", {"sauce"}} });
+        REQUIRE(positionalArgs.empty());
+        REQUIRE(errors.empty());
+    }
+
+    SECTION("Short args, seperate, equalsed parameters")
+    {
+        auto&& [argc, argv, errFunc, errors] = TestHelper({ "./app/path/test.exe", "-p=pot", "-h", "-s=sauce" });
+        auto parser = GetDefaultPosixArgsParser();
+
+        auto&& [ mappedArgs, positionalArgs ] = parser(argc, argv, errFunc);
+        CHECK(mappedArgs.size() == 3);
+        REQUIRE(mappedArgs == std::vector<ParsedArg>{ {1, "p", {"pot"}}, {2, "h", {}}, {3, "s", {"sauce"}} });
+        REQUIRE(positionalArgs.empty());
+        REQUIRE(errors.empty());
+    }
+
+    SECTION("Short args, combined, equalsed parameter")
+    {
+        auto&& [argc, argv, errFunc, errors] = TestHelper({ "./app/path/test.exe", "-phs=sauce" });
+        auto parser = GetDefaultPosixArgsParser();
+
+        auto&& [ mappedArgs, positionalArgs ] = parser(argc, argv, errFunc);
+        CHECK(mappedArgs.size() == 3);
+        REQUIRE(mappedArgs == std::vector<ParsedArg>{ {1, "p", {}}, {1, "h", {}}, {1, "s", {"sauce"}} });
+        REQUIRE(positionalArgs.empty());
+        REQUIRE(errors.empty());
+    }
+
+    SECTION("Short args, combined, spaced parameter")
+    {
+        auto&& [argc, argv, errFunc, errors] = TestHelper({ "./app/path/test.exe", "-phs", "sauce" });
+        auto parser = GetDefaultPosixArgsParser();
+
+        auto&& [ mappedArgs, positionalArgs ] = parser(argc, argv, errFunc);
+        CHECK(mappedArgs.size() == 3);
+        REQUIRE(mappedArgs == std::vector<ParsedArg>{ {1, "p", {}}, {1, "h", {}}, {1, "s", {"sauce"}} });
+        REQUIRE(positionalArgs.empty());
+        REQUIRE(errors.empty());
+    }
+
+    SECTION("Mixed args, mixed short grouping, mixed parameters")
+    {
+        auto&& [argc, argv, errFunc, errors] = TestHelper({ "./app/path/test.exe", "-phs", "sauce", "--vector=33.3", "--hello", "-f", "-lj=true", "--nein", "!9" });
+        auto parser = GetDefaultPosixArgsParser();
+
+        auto&& [ mappedArgs, positionalArgs ] = parser(argc, argv, errFunc);
+        CHECK(mappedArgs.size() == 9);
+        REQUIRE(mappedArgs == std::vector<ParsedArg>{ {1, "p", {}}, {1, "h", {}}, {1, "s", {"sauce"}}, {3, "vector", {"33.3"}}, {4, "hello", {}}, {5, "f", {}}, {6, "l", {}}, {6, "j", {"true"}}, {7, "nein", {"!9"}} });
+        REQUIRE(positionalArgs.empty());
+        REQUIRE(errors.empty());
+    }
+
+    SECTION("Positional args only")
+    {
+        auto&& [argc, argv, errFunc, errors] = TestHelper({ "./app/path/test.exe", "--", "first", "-second", "--third=true" });
+        auto parser = GetDefaultPosixArgsParser();
+
+        auto&& [ mappedArgs, positionalArgs ] = parser(argc, argv, errFunc);
+        REQUIRE(mappedArgs.empty());
+        CHECK(positionalArgs.size() == 3);
+        REQUIRE(positionalArgs == std::vector<std::string>{ "first", "-second", "--third=true" });
+        REQUIRE(errors.empty());
     }
 
 
-    // TODO are there more Option errors?
+    SECTION("Positional and mapped args")
+    {
+        auto&& [argc, argv, errFunc, errors] = TestHelper({ "./app/path/test.exe", "-phs", "sauce", "--vector=33.3", "--", "first", "-second", "--third=true" });
+        auto parser = GetDefaultPosixArgsParser();
+
+        auto&& [ mappedArgs, positionalArgs ] = parser(argc, argv, errFunc);
+        CHECK(mappedArgs.size() == 4);
+        REQUIRE(mappedArgs == std::vector<ParsedArg>{ {1, "p", {}}, {1, "h", {}}, {1, "s", {"sauce"}}, {3, "vector", {"33.3"}} });
+        CHECK(positionalArgs.size() == 3);
+        REQUIRE(positionalArgs == std::vector<std::string>{ "first", "-second", "--third=true" });
+        REQUIRE(errors.empty());
+    }
 
 }
 
